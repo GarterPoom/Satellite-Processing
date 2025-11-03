@@ -1,203 +1,160 @@
 import os
 import glob
 import logging
-import numpy as np
+import shutil
+import tempfile
 from collections import defaultdict
+from pathlib import Path
+
+import numpy as np
 from osgeo import gdal, osr
 
-# Setup logger
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# --- Configuration ---
+# Set the root directory containing subfolders of raster images.
+# Each subfolder will be processed into a separate mosaic.
+ROOT_DIR = Path("Raster_แม่น้ำโขง")
+
+# Set the directory where the final mosaics will be saved.
+OUTPUT_DIR = Path("Raster_Mosaic")
+
+# --- Logging Setup ---
+# Configures logging to print informative messages during the process.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] - %(message)s",
+    handlers=[logging.StreamHandler()]
+)
 logger = logging.getLogger(__name__)
 
-# Configure input and output directories/paths
-root_dir = 'Raster_แม่น้ำโขง'
-output_dir = 'Raster_Mosaic'
-temp_dir = os.path.join('Raster_Normalized')
-final_output_path = os.path.join(output_dir, '20250323_27_Mosaic.tif')
+def normalize_brightness(input_path: str, output_path: str) -> str:
+    """
+    Normalizes raster pixel values to the 0-255 range (8-bit) for each band,
+    while respecting NoData values.
 
-os.makedirs(output_dir, exist_ok=True)
-os.makedirs(temp_dir, exist_ok=True)
+    Args:
+        input_path (str): Path to the source raster.
+        output_path (str): Path to save the normalized raster.
 
-# Find all raster files
-raster_files = glob.glob(os.path.join(root_dir, '*.tif')) + glob.glob(os.path.join(root_dir, '*.tiff'))
-logger.info(f"Found {len(raster_files)} raster files to process")
-
-def normalize_brightness(input_path, output_path):
-    """Normalize raster pixel values to 0–255 range per band"""
-    ds = gdal.Open(input_path)
-    if ds is None:
-        logger.warning(f"Could not open {input_path} for normalization.")
-        return None
-
-    driver = gdal.GetDriverByName('GTiff')
-    out_ds = driver.Create(
-        output_path,
-        ds.RasterXSize,
-        ds.RasterYSize,
-        ds.RasterCount,
-        gdal.GDT_Byte,
-        options=['TILED=YES', 'COMPRESS=LZW']
-    )
-    out_ds.SetGeoTransform(ds.GetGeoTransform())
-    out_ds.SetProjection(ds.GetProjection())
-
-    for band_index in range(1, ds.RasterCount + 1):
-        band = ds.GetRasterBand(band_index)
-        arr = band.ReadAsArray().astype(np.float32)
-
-        min_val = np.nanmin(arr)
-        max_val = np.nanmax(arr)
-        if max_val - min_val > 0:
-            scaled = ((arr - min_val) / (max_val - min_val) * 255).astype(np.uint8)
-        else:
-            scaled = np.zeros_like(arr, dtype=np.uint8)
-
-        out_ds.GetRasterBand(band_index).WriteArray(scaled)
-
-    ds = None
-    out_ds = None
-    return output_path
-
-def analyze_rasters(files):
-    """Analyze rasters to determine projection and average resolution"""
-    logger.info("Analyzing rasters to determine optimal mosaic parameters...")
-    proj_counts = defaultdict(int)
-    x_res_list = []
-    y_res_list = []
-
-    for f in files:
-        ds = gdal.Open(f)
+    Returns:
+        str: The path to the created normalized raster, or None if it fails.
+    """
+    try:
+        ds = gdal.Open(input_path)
         if ds is None:
-            logger.warning(f"Cannot open {f} for analysis")
-            continue
+            logger.warning(f"Could not open {input_path} for normalization.")
+            return None
 
-        # Projection
-        srs = osr.SpatialReference()
-        srs.ImportFromWkt(ds.GetProjection())
-        if srs.IsProjected():
-            epsg = srs.GetAuthorityCode(None)
-            proj_counts[epsg] += 1
+        driver = gdal.GetDriverByName('GTiff')
+        out_ds = driver.Create(
+            output_path,
+            ds.RasterXSize,
+            ds.RasterYSize,
+            ds.RasterCount,
+            gdal.GDT_Byte,  # 8-bit output
+            options=['TILED=YES', 'COMPRESS=LZW', 'BIGTIFF=YES']
+        )
+        out_ds.SetGeoTransform(ds.GetGeoTransform())
+        out_ds.SetProjection(ds.GetProjection())
 
-        # Resolution
-        gt = ds.GetGeoTransform()
-        x_res_list.append(abs(gt[1]))
-        y_res_list.append(abs(gt[5]))
+        for i in range(1, ds.RasterCount + 1):
+            band = ds.GetRasterBand(i)
+            nodata_val = band.GetNoDataValue()
+            arr = band.ReadAsArray().astype(np.float32)
+
+            if nodata_val is not None:
+                # Create a mask for valid data
+                valid_data_mask = arr != nodata_val
+                # Use the mask to calculate min/max only on valid data
+                min_val = np.min(arr[valid_data_mask])
+                max_val = np.max(arr[valid_data_mask])
+            else:
+                # If no nodata value, use the whole array
+                valid_data_mask = np.ones_like(arr, dtype=bool)
+                min_val = np.min(arr)
+                max_val = np.max(arr)
+
+            # Avoid division by zero if the band is a solid color
+            if max_val > min_val:
+                scaled = 255 * (arr - min_val) / (max_val - min_val)
+            else:
+                scaled = np.zeros_like(arr)
+
+            # Apply the nodata mask back to the scaled array
+            scaled[~valid_data_mask] = 0  # Set nodata pixels to 0 in the output
+            
+            out_band = out_ds.GetRasterBand(i)
+            out_band.WriteArray(scaled.astype(np.uint8))
+            out_band.SetNoDataValue(0)  # Set nodata value for the output band
+            out_band.FlushCache()
+
+        logger.info(f"Normalized '{os.path.basename(input_path)}'")
+        return output_path
+    except Exception as e:
+        logger.error(f"Failed to normalize {input_path}: {e}")
+        return None
+    finally:
+        ds = None
+        out_ds = None
+
+def raster_pyramid(filepath, overview_levels=[2, 4, 8, 16, 32], resampling_method='nearest'):
+    """
+    Builds raster pyramid overviews for a given GeoTIFF file.
+
+    Args:
+        filepath (str): Path to the GeoTIFF file.
+        overview_levels (list): List of overview levels to generate. Default is [2, 4, 8, 16, 32].
+        resampling_method (str): Resampling method to use. Default is 'nearest'.
+
+    Returns:
+        str: Path to the created overview GeoTIFF file.
+    """
+    try:
+        ds = gdal.Open(filepath, gdal.GA_Update)
+        if ds is None:
+            logger.warning(f"Could not open {filepath} for pyramid creation.")
+            return None
+
+        # Create overviews
+        ds.BuildOverviews(resampling_method, overview_levels)
+        logger.info(f"Created pyramid overviews for '{os.path.basename(filepath)}'")
+        return filepath
+    except Exception as e:
+        logger.error(f"Failed to create pyramid for {filepath}: {e}")
+        return None
+    finally:
         ds = None
 
-    # Most common projection
-    if not proj_counts:
-        logger.warning("No projections found. Defaulting to EPSG:4326")
-        target_epsg = "EPSG:4326"
-    else:
-        target_epsg = f"EPSG:{max(proj_counts.items(), key=lambda x: x[1])[0]}"
+def process_raster_folder(folder_path: Path, output_folder: Path):
+    """
+    Processes all raster files in a given folder, normalizing brightness and creating pyramids.
 
-    # Average resolution
-    avg_x_res = sum(x_res_list) / len(x_res_list)
-    avg_y_res = sum(y_res_list) / len(y_res_list)
+    Args:
+        folder_path (Path): Path to the folder containing raster files.
+        output_folder (Path): Path to the output folder for normalized rasters.
+    """
+    if not output_folder.exists():
+        output_folder.mkdir(parents=True)
 
-    logger.info(f"Target EPSG: {target_epsg}, Avg Res: {avg_x_res}, {avg_y_res}")
-    return target_epsg, avg_x_res, avg_y_res
+    for raster_file in glob.glob(str(folder_path / "*.tif")):
+        logger.info(f"Processing {raster_file}...")
+        normalized_raster = normalize_brightness(raster_file, output_folder / Path(raster_file).name)
+        if normalized_raster:
+            raster_pyramid(normalized_raster)
 
-# Analyze rasters
-target_epsg, x_res, y_res = analyze_rasters(raster_files)
+def main():
+    """
+    Main function to process all subfolders in the ROOT_DIR.
+    Each subfolder will be processed into a separate mosaic.
+    """
+    if not ROOT_DIR.exists():
+        logger.error(f"Root directory '{ROOT_DIR}' does not exist.")
+        return
 
-# Normalize and reproject all rasters
-all_reprojected = []
-for i, raster_file in enumerate(raster_files):
-    base_name = os.path.basename(raster_file)
-    normalized_path = os.path.join(temp_dir, f"norm_{i}_{base_name}")
-    reprojected_path = os.path.join(output_dir, f"reproj_{i}_{base_name}")
+    for subfolder in ROOT_DIR.iterdir():
+        if subfolder.is_dir():
+            output_subfolder = OUTPUT_DIR / subfolder.name
+            logger.info(f"Processing folder: {subfolder.name}")
+            process_raster_folder(subfolder, output_subfolder)
 
-    logger.info(f"Normalizing brightness of {base_name}")
-    norm_result = normalize_brightness(raster_file, normalized_path)
-    if not norm_result:
-        continue
-
-    logger.info(f"Reprojecting {base_name} to {target_epsg}")
-    gdal.Warp(
-        reprojected_path,
-        norm_result,
-        options=gdal.WarpOptions(
-            dstSRS=target_epsg,
-            xRes=x_res,
-            yRes=y_res,
-            targetAlignedPixels=True,
-            resampleAlg='near',
-            srcNodata=0,
-            dstNodata=0,
-            creationOptions=['TILED=YES', 'COMPRESS=LZW', 'BIGTIFF=YES']
-        )
-    )
-    all_reprojected.append(reprojected_path)
-
-if not all_reprojected:
-    logger.error("No rasters were successfully reprojected!")
-    exit(1)
-
-# Build VRT
-vrt_path = os.path.join(output_dir, 'aligned_mosaic.vrt')
-logger.info("Building VRT from reprojected files...")
-vrt = gdal.BuildVRT(
-    vrt_path,
-    all_reprojected,
-    options=gdal.BuildVRTOptions(
-        resampleAlg='nearest',
-        addAlpha=False,
-        separate=False,
-        srcNodata=0,
-        VRTNodata=0
-    )
-)
-if vrt is None:
-    logger.error("Failed to build VRT")
-    exit(1)
-vrt = None
-
-# Translate VRT to final GeoTIFF
-logger.info("Creating final mosaic...")
-gdal.Translate(
-    final_output_path,
-    vrt_path,
-    options=gdal.TranslateOptions(
-        format='GTiff',
-        creationOptions=[
-            'TILED=YES',
-            'COMPRESS=LZW',
-            'BIGTIFF=YES',
-            'PREDICTOR=2'
-        ]
-    )
-)
-logger.info(f"Final mosaic saved to: {final_output_path}")
-
-# Clean up
-if os.path.exists(final_output_path):
-    logger.info("Cleaning up temporary files...")
-    try:
-        os.remove(vrt_path)
-    except Exception as e:
-        logger.warning(f"Failed to remove VRT: {e}")
-
-    for file in all_reprojected:
-        try:
-            os.remove(file)
-        except Exception as e:
-            logger.warning(f"Failed to remove {file}: {e}")
-
-logger.info("Mosaic creation complete!")
-
-# Cleanup
-if os.path.exists(final_output_path):
-    logger.info("Cleaning up temporary files...")
-    try:
-        os.remove(vrt_path)
-    except Exception as e:
-        logger.warning(f"Failed to remove VRT: {e}")
-
-    for file in all_reprojected:
-        try:
-            os.remove(file)
-        except Exception as e:
-            logger.warning(f"Failed to remove {file}: {e}")
-
-logger.info("Mosaic creation complete!")
+if __name__ == "__main__":
+    main()
