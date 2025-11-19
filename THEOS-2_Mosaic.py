@@ -93,7 +93,8 @@ def build_overviews(filepath, overview_levels=[2, 4, 8, 16, 32], resampling_meth
 
 def main():
     # Configure input and output directories/paths
-    root_dir = r"F:\\Raster_Pyramid_Output" # This can contain subfolders or raster files directly
+    root_dir = r"Raster_Pyramid_Output" # This can contain subfolders or raster files directly
+    
     output_dir = r'Raster_Mosaic' # Output directory for mosaics
     os.makedirs(output_dir, exist_ok=True) # Create output directory if it doesn't exist
 
@@ -125,7 +126,7 @@ def main():
         logger.info(f"\n--- Processing directory: {dir_name} ---") # Log the current directory being processed
 
         # Define output path for the current directory's mosaic
-        final_output_filename = f"{dir_name}_mosaic.tif" # Output filename" # Output filename
+        final_output_filename = "FL_20251116_TH2_20251116_1028_ENT.tif" #f"{dir_name}_mosaic.tif" # Output filename" # Output filename
         final_output_path = os.path.join(output_dir, final_output_filename) # Full output path
 
         # Find all raster files within the current processing directory
