@@ -40,7 +40,9 @@ def analyze_rasters(files):
         logger.warning("No projections found. Defaulting to EPSG:4326") # Log a warning
         target_epsg = "EPSG:4326" # Default to WGS84
     else:
-        target_epsg = "EPSG:32647" # Use EPSG:32647 as default which is WGS84 UTM Zone 47 North (UTM Zone 47N) Coverage Thailand.
+        # Determine the most common projection from the input files
+        most_common_epsg_code = max(proj_counts, key=proj_counts.get)
+        target_epsg = f"EPSG:{most_common_epsg_code}"
 
     # Average resolution - check if lists are empty to avoid ZeroDivisionError
     if not x_res_list or not y_res_list: # Check if resolution lists are empty
@@ -57,32 +59,41 @@ def build_overviews(filepath, overview_levels=[2, 4, 8, 16, 32], resampling_meth
     Builds raster pyramid overviews for a given GeoTIFF file.
 
     Args:
-        filepath (str): Path to the GeoTIFF file.
-        overview_levels (list): List of integers representing the downsampling factors
-                                for each overview level. Default is [2, 4, 8, 16, 32].
-        resampling_method (str): Resampling method to use for overview creation.
-                                 Common options include 'average', 'nearest', 'cubic', 'mode',
-                                 'lanczos'. Default is 'nearest'.
+        filepath (str): Path to the GeoTIFF file for which to build overviews.
+        overview_levels (list): A list of integers representing the downsampling factors for each overview level.
+                                Default is [2, 4, 8, 16, 32].
+        resampling_method (str): The resampling method to use. Common options include 'NEAREST', 'AVERAGE', 'CUBIC'.
+                                 Default is 'nearest'.
     """
     logger.info(f"Building overviews for {filepath} using levels {overview_levels} with {resampling_method} resampling...")
+
+    gdal.SetConfigOption('BIGTIFF_OVERVIEW', 'YES') # Allow BigTIFF for overviews
+
     try:
-        # Perform Raster Pyramid with Internal Pyramid
-        ds = gdal.Open(filepath, gdal.GA_ReadOnly) # Open the file in ovr for open file in ArcGIS
-        if ds is None: # Check if the file was opened successfully
-            logger.error(f"Cannot open {filepath} to build overviews.") # Log an error
-            return # Exit the function
+        # Open in read-only mode to force the creation of an external .ovr file,
+        # which is generally more compatible with ArcGIS.
+        ds = gdal.Open(filepath, gdal.GA_ReadOnly)
+        if ds is None:
+            logger.error(f"Cannot open {filepath} to build overviews.")
+            return
 
         # Build overviews
-        ds.BuildOverviews(resampling_method, overview_levels) # Build the overviews with specified levels and method
-        ds = None # Close the dataset 
+        ds.BuildOverviews(resampling_method, overview_levels)
+        ds = None # Close the dataset
+        logger.info(f"Successfully built overviews for {filepath}")
 
-        logger.info(f"Successfully built overviews for {filepath}") # Log success
-    except Exception as e: # Catch any exceptions
-        logger.error(f"Failed to build overviews for {filepath}: {e}") # Log the error
+    except OSError as e:
+        if e.winerror == 112: # Specifically check for "not enough space on the disk" error on Windows
+            logger.error(f"Failed to process {filepath}: Not enough space on the disk. Please free up space and try again.")
+        else:
+            logger.error(f"An OS error occurred while processing {filepath}: {e}")
+
+    except Exception as e:
+        logger.error(f"Failed to build overviews for {filepath}: {e}")
 
 def main():
     # Configure input and output directories/paths
-    root_dir = r"N:\\Flood\\y2025\\10_satellite\\Theos-2\\INT_2_THA_20251016\\INT_69_024_THA_Burirum_FL_20251016" # This can contain subfolders or raster files directly
+    root_dir = r"N:\Flood\y2025\10_satellite\Theos-2\INT_69_053_THA_Ayutthaya_FL_20251112" # This can contain subfolders or raster files directly
     output_dir = r'Raster_Mosaic' # Output directory for mosaics
     os.makedirs(output_dir, exist_ok=True) # Create output directory if it doesn't exist
 
@@ -114,7 +125,7 @@ def main():
         logger.info(f"\n--- Processing directory: {dir_name} ---") # Log the current directory being processed
 
         # Define output path for the current directory's mosaic
-        final_output_filename = f"{dir_name}_Mosaic.tif" # Output filename
+        final_output_filename = "FL_20251112_TH2_20251112_1051_ENT.tif" #f"{dir_name}_mosaic.tif" # Output filename" # Output filename
         final_output_path = os.path.join(output_dir, final_output_filename) # Full output path
 
         # Find all raster files within the current processing directory
@@ -138,7 +149,7 @@ def main():
         os.makedirs(reprojected_temp_dir, exist_ok=True) # Create the temp directory
 
         # Reproject all rasters for the current directory
-        all_reprojected = [] # List to hold paths of reprojected rasters
+        files_for_mosaic = [] # List to hold paths of rasters that will be included in the mosaic
         for i, raster_file in enumerate(raster_files): # Loop through each raster file
             try:
                 ds = gdal.Open(raster_file) # Open the raster file
@@ -146,47 +157,25 @@ def main():
                     logger.warning(f"Cannot open {raster_file}. Skipping.") # Log a warning
                     continue # Skip to the next file
  
-                srs = osr.SpatialReference() # Create spatial reference object
-                srs.ImportFromWkt(ds.GetProjection()) # Import projection from the dataset
+                srs = osr.SpatialReference()
+                srs.ImportFromWkt(ds.GetProjection())
                 source_epsg_code = srs.GetAuthorityCode(None) # Get EPSG code
                 source_epsg_str = f"EPSG:{source_epsg_code}" if source_epsg_code else "Unknown"
                 ds = None # Close the dataset
  
                 base_name = os.path.basename(raster_file) # Get the base name of the file
 
-                if source_epsg_str == target_epsg: # Check if reprojection is needed
-                    logger.info(f"'{base_name}' (CRS: {source_epsg_str}) is already in target CRS. Skipping reprojection.") # Log that reprojection is skipped
-                    all_reprojected.append(raster_file) # Add original file to the list
-                    continue # Skip to the next file
-  
-                logger.info(f"Source CRS for '{base_name}' is {source_epsg_str}, which differs from target {target_epsg}.")
-                reprojected_path = os.path.join(reprojected_temp_dir, f"reproj_{i}_{base_name}") # Path for the reprojected file
- 
-                logger.info(f"Reprojecting {base_name} to {target_epsg} with resolution {x_res}, {y_res} and aligned pixels") # Log reprojection details
-                warp_options = gdal.WarpOptions( # Set warp options
-                    dstSRS=target_epsg, # Target spatial reference
-                    xRes=x_res, # Target x resolution
-                    yRes=y_res, # Target y resolution
-                    targetAlignedPixels=True, # Align pixels to the target resolution
-                    resampleAlg='near', # Changed from 'nearest' to 'near' for gdal.WarpOptions
-                    srcNodata=0, # Assuming 0 is nodata in source
-                    dstNodata=0, # Set nodata in output
-                    outputType=gdal.GDT_UInt16, # Use UInt16 for output data type
-                    creationOptions=['TILED=YES', 'COMPRESS=LZW', 'BIGTIFF=YES'], # Creation options
-                    errorThreshold=0.0 # Set error threshold to 0.0 for strict reprojection
-                )
-                ds = gdal.Warp(reprojected_path, raster_file, options=warp_options) # Perform the reprojection
-                if ds is None: # Check if the warp operation was successful
-                    logger.error(f"gdal.Warp failed for {raster_file} and returned None.") # Log an error
-                else: # If successful
-                    all_reprojected.append(reprojected_path) # Add reprojected file to the list
-                ds = None # Close the dataset
+                if source_epsg_str == target_epsg:
+                    logger.info(f"'{base_name}' (CRS: {source_epsg_str}) matches target CRS. Adding to mosaic.")
+                    files_for_mosaic.append(raster_file)
+                else:
+                    logger.warning(f"'{base_name}' (CRS: {source_epsg_str}) does not match target CRS ({target_epsg}). Skipping this file.")
   
             except Exception as e: # Catch any exceptions
-                logger.error(f"Failed to reproject {raster_file}: {e}") # Log the error
+                logger.error(f"Failed to process {raster_file}: {e}") # Log the error
                 continue # Skip to the next file
  
-        if not all_reprojected: # Check if any rasters were successfully reprojected
+        if not files_for_mosaic: # Check if any rasters were successfully processed
             logger.error(f"No rasters were successfully processed for directory {dir_name}!") # Log an error
             # Clean up the temp directory that was created for this failed task
             try:
@@ -201,7 +190,7 @@ def main():
         logger.info(f"Building VRT for {dir_name} from processed files...") # Log VRT building
         vrt = gdal.BuildVRT( # Build the VRT
             vrt_path, # Path to save the VRT
-            all_reprojected, # List of reprojected files
+            files_for_mosaic, # List of files with matching CRS
             options=gdal.BuildVRTOptions( # VRT build options
                 resampleAlg='nearest', # 'nearest' is correct for BuildVRTOptions
                 addAlpha=False, # Do not add alpha band
@@ -227,7 +216,7 @@ def main():
             vrt_path, # Input VRT file
             options=gdal.TranslateOptions( # Translation options
                 format='GTiff', # Output format
-                creationOptions=['TILED=YES', 'COMPRESS=LZW', 'BIGTIFF=YES', 'PREDICTOR=2'] # Creation options
+                creationOptions=['TILED=YES', 'BIGTIFF=YES', 'PREDICTOR=2', 'COMPRESS=DEFLATE'] # Creation options
             )
         )
         logger.info(f"Final mosaic for {dir_name} saved to: {final_output_path}") # Log the output path
