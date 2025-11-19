@@ -220,163 +220,133 @@ def main():
         python canopy_raster_mosiac.py
 
     """
-    root_dir = r'Canopy' # Root directory containing subfolders of GeoTIFFs
-    output_dir = r'Raster_Mosaic' # Directory to store the final mosaics
-    shapefile_path = r'Thailand\L05_Province_ESRI_2559.shp' # Path to the shapefile
-    os.makedirs(output_dir, exist_ok=True) # Create the output directory
-
-    nodata_value = 0 # Value to use for nodata
+    root_dir = r'3_ETH_Canopy_Sentinel-2_10m' # Input directory containing subfolders of rasters
+    output_dir = r'Raster_Mosaic' # Output directory for the mosaics
+    shapefile_path = r'Thailand\L05_Province_ESRI_2559.shp' # Path to the shapefile for clipping and alignment
+    os.makedirs(output_dir, exist_ok=True) # Create the output directory if it doesn't exist
+    nodata_value = -9999 # NoData value to use for the output mosaics
 
     clean_shapefile_path = create_clean_cutline(shapefile_path) # Create a clean version of the shapefile
-    if not clean_shapefile_path: # Check if the clean shapefile could be created
-        logger.error("Could not create a clean cutline from the source shapefile. Exiting.") # Log the error message
+    if not clean_shapefile_path: # Check if the clean shapefile was created successfully
+        logger.error("Could not create a clean cutline from the source shapefile. Exiting.") # Log the error message  
         return # Exit the script
 
-    subfolders = [f.path for f in os.scandir(root_dir) if f.is_dir()] # Get a list of subfolders in the root directory
+    subfolders = [f.path for f in os.scandir(root_dir) if f.is_dir()] # Get a list of all subfolders in the input directory
+    root_rasters = glob.glob(os.path.join(root_dir, '*.tif')) + \
+                   glob.glob(os.path.join(root_dir, '*.tiff')) # Get a list of all rasters in the root directory
 
-    if not subfolders: # Check if any subfolders were found 
-        logger.warning(f"No subfolders found in {root_dir}. Exiting.") # Log the warning
+    # If no subfolders, treat root_dir as a single folder to process
+    if not subfolders and root_rasters:
+        logger.info(f"No subfolders found in {root_dir}. Processing root-level rasters instead.") # Log the operation
+        subfolders = [root_dir] # Treat root_dir as a single folder to process
+
+    if not subfolders: # If still no subfolders or rasters, exit
+        logger.warning(f"No raster files or subfolders found in {root_dir}. Exiting.") # Log the warning message 
         return # Exit the script
 
     for subfolder_path in subfolders: # Loop through all subfolders
-        subfolder_name = os.path.basename(subfolder_path) # Get the name of the subfolder
-        logger.info(f"\n--- Processing subfolder: {subfolder_name} ---") # Log the subfolder name
+        subfolder_name = os.path.basename(subfolder_path.rstrip(os.sep)) or "Root" # Get the name of the subfolder
+        logger.info(f"\n--- Processing folder: {subfolder_name} ---") # Log the operation
 
-        final_output_filename = f"{subfolder_name}_Canopy_Mosaic.tif" # Create the output filename
-        final_output_path = os.path.join(output_dir, final_output_filename) # Create the output path
+        final_output_filename = f"{subfolder_name}_Canopy_Mosaic.tif" # Define the output filename
+        final_output_path = os.path.join(output_dir, final_output_filename) # Define the full output path
 
-        # Find all raster files within the current subfolder
         raster_files = glob.glob(os.path.join(subfolder_path, '*.tif')) + \
-                       glob.glob(os.path.join(subfolder_path, '*.tiff'))
-
-        if not raster_files: # Check if any raster files were found
-            logger.warning(f"No raster files found in {subfolder_path}. Skipping.") # Log the warning
+                       glob.glob(os.path.join(subfolder_path, '*.tiff')) # Get a list of all rasters in the subfolder
+        
+        if not raster_files: # If no rasters found, skip to the next subfolder
+            logger.warning(f"No raster files found in {subfolder_path}. Skipping.") # Log the warning message
             continue # Skip to the next subfolder
 
-        overlaying_rasters = [] # List to store the rasters that overlap the shapefile
-        for raster_file in raster_files: # Loop through all raster files
-            logger.info(f"Checking overlap for: {raster_file}") # Log the raster file name
-            if raster_overlays_shapefile(raster_file, clean_shapefile_path): # Check if the raster overlaps the shapefile
-                logger.info(" -> Overlaps shapefile") # Log the result
-                overlaying_rasters.append(raster_file) # Add the raster to the list
-            else: # The raster does not overlap the shapefile
-                logger.info(" -> No overlap") # Log the result
+        overlaying_rasters = [] # List to store rasters that overlap with the shapefile
+        for raster_file in raster_files: # Loop through all rasters in the subfolder
+            logger.info(f"Checking overlap for: {raster_file}") # Log the operation
+            if raster_overlays_shapefile(raster_file, clean_shapefile_path): # Check if the raster overlaps with the shapefile
+                logger.info(" -> Overlaps shapefile") # Log the operation
+                overlaying_rasters.append(raster_file) # Add the raster to the list of overlaying rasters
+            else: # If no overlap
+                logger.info(" -> No overlap") # Log the operation
 
-        if not overlaying_rasters: # Check if any rasters overlap the shapefile
-            logger.warning(f"No rasters overlap the shapefile in {subfolder_path}. Skipping.") # Log the warning
+        if not overlaying_rasters: # If no rasters overlap with the shapefile, skip to the next subfolder
+            logger.warning(f"No rasters overlap the shapefile in {subfolder_path}. Skipping.") # Log the warning message
             continue # Skip to the next subfolder
 
-        logger.info(f"Selected {len(overlaying_rasters)} raster(s) for mosaicking") # Log the number of selected rasters
-
-        target_epsg, x_res, y_res = analyze_rasters(overlaying_rasters) # Analyze the rasters
-        if x_res is None or y_res is None: # Check if the average resolution could be determined
-            logger.error(f"Failed to determine average resolution for {subfolder_name}. Skipping this subfolder.") # Log the error
+        target_epsg, x_res, y_res = analyze_rasters(overlaying_rasters) # Analyze the overlaying rasters to determine target EPSG and average resolution
+        if x_res is None or y_res is None: # If average resolution could not be determined, skip to the next subfolder
+            logger.error(f"Failed to determine average resolution for {subfolder_name}. Skipping.") # Log the error message
             continue # Skip to the next subfolder
 
-        all_reprojected = [] # List to store the reprojected rasters
-        reprojected_temp_dir = os.path.join(output_dir, f"temp_{subfolder_name}_reprojected") # Create a temporary directory
+        reprojected_temp_dir = os.path.join(output_dir, f"temp_{subfolder_name}_reprojected") # Temporary directory for reprojected rasters
         os.makedirs(reprojected_temp_dir, exist_ok=True) # Create the temporary directory
+        all_reprojected = [] # List to store paths of all reprojected rasters
 
-        for i, raster_file in enumerate(overlaying_rasters): # Loop through all selected rasters
-            try: 
-                # Check if reprojection is needed 
-                ds_check = gdal.Open(raster_file) # Open the dataset
-                if ds_check is None: # Check if the dataset could be opened
-                    logger.warning(f"Cannot open {raster_file} to check CRS. Skipping.") # Log the warning
+        for i, raster_file in enumerate(overlaying_rasters): # Loop through all overlaying rasters
+            try:
+                ds_check = gdal.Open(raster_file) # Open the raster to check its projection
+                if ds_check is None: # If the raster could not be opened, skip to the next raster
+                    logger.warning(f"Cannot open {raster_file} to check CRS. Skipping.") # Log the warning message
                     continue # Skip to the next raster
-
                 srs_check = osr.SpatialReference() # Create a SpatialReference object
-                source_epsg_str = None # String to store the EPSG code 
-                proj_wkt_check = ds_check.GetProjection() # Get the projection
-                if proj_wkt_check: # Check if the projection is not empty
-                    srs_check.ImportFromWkt(proj_wkt_check) # Import the projection
+                source_epsg_str = None # Variable to store the source EPSG code
+                proj_wkt_check = ds_check.GetProjection() # Get the projection WKT
+                if proj_wkt_check: # If the projection WKT is not empty
+                    srs_check.ImportFromWkt(proj_wkt_check) # Import the projection WKT into the SpatialReference object
                     authority_name = srs_check.GetAuthorityName(None) # Get the authority name
                     authority_code = srs_check.GetAuthorityCode(None) # Get the authority code
-                    if authority_name and authority_name.upper() == "EPSG" and authority_code: # Check if the projection is EPSG
-                        source_epsg_str = f"EPSG:{authority_code}" # Get the EPSG code
-                ds_check = None  # Close the dataset
+                    if authority_name and authority_name.upper() == "EPSG" and authority_code: # If the projection is EPSG
+                        source_epsg_str = f"EPSG:{authority_code}" # Set the source EPSG code
+                ds_check = None # Close the dataset
 
-                if source_epsg_str == target_epsg: # Check if the source and target EPSG codes are the same
-                    logger.info(f"'{os.path.basename(raster_file)}' is already in target CRS ({target_epsg}). Skipping reprojection.") # Log the message
-                    all_reprojected.append(raster_file) # Add the raster to the list
+                if source_epsg_str == target_epsg: # If the raster is already in the target projection, skip reprojection
+                    logger.info(f"{os.path.basename(raster_file)} already in {target_epsg}. Skipping reprojection.") # Log the operation
+                    all_reprojected.append(raster_file) # Add the raster to the list of reprojected rasters
                     continue # Skip to the next raster
 
-                base_name = os.path.basename(raster_file) # Get the base name of the raster
-                reprojected_path = os.path.join(reprojected_temp_dir, f"reproj_{i}_{base_name}") # Create the reprojected path
-
-                logger.info(f"Reprojecting '{base_name}' from {source_epsg_str or 'Unknown CRS'} to {target_epsg}...") # Log the message
-                warp_options = gdal.WarpOptions( # Create the warp options
-                    dstSRS=target_epsg, # Set the target CRS
-                    xRes=x_res, # Set the x resolution
-                    yRes=y_res, # Set the y resolution
-                    targetAlignedPixels=True, # Align to the shapefile
-                    srcNodata=0, # Assuming 0 is nodata in source
-                    dstNodata=0, # Set nodata in output
-                    resampleAlg='near', # Set the resampling algorithm
-                    dstNodata=nodata_value, # Set the nodata value
-                    outputType=gdal.GDT_UInt16, # Set the output type
-                    creationOptions=['TILED=YES', 'COMPRESS=LZW', 'BIGTIFF=YES'], # Set the creation options
-                    errorThreshold=0.0 # Set the error threshold
+                reprojected_path = os.path.join(reprojected_temp_dir, f"reproj_{i}_{os.path.basename(raster_file)}") # Define the path for the reprojected raster
+                logger.info(f"Reprojecting '{raster_file}' from {source_epsg_str or 'Unknown'} to {target_epsg}...") # Log the operation 
+                warp_options = gdal.WarpOptions( # Define the warp options for reprojection
+                    dstSRS=target_epsg, xRes=x_res, yRes=y_res, targetAlignedPixels=True, # Align pixels to the target resolution
+                    srcNodata=0, resampleAlg='near', dstNodata=nodata_value, # Set NoData values
+                    outputType=gdal.GDT_UInt16, # Set output data type
+                    creationOptions=['TILED=YES', 'COMPRESS=LZW', 'BIGTIFF=YES'], # Set creation options
+                    errorThreshold=0.0 # Set error threshold for reprojection
                 )
                 ds = gdal.Warp(reprojected_path, raster_file, options=warp_options) # Reproject the raster
-                if ds is not None: # Check if the dataset was successfully reprojected
-                    all_reprojected.append(reprojected_path) # Add the reprojected path to the list
+                if ds:
+                    all_reprojected.append(reprojected_path) # Add the reprojected raster to the list
                 ds = None # Close the dataset
 
-            except Exception as e: # Catch any exceptions
-                logger.error(f"Failed to process or reproject {raster_file}: {e}") # Log the error
+            except Exception as e: # Catch any exceptions that may occur
+                logger.error(f"Failed to process {raster_file}: {e}") # Log the error message
                 continue # Skip to the next raster
 
-        if not all_reprojected: # Check if any rasters were successfully reprojected
-            logger.error(f"No rasters were successfully reprojected for subfolder {subfolder_name}!") # Log the error
-            shutil.rmtree(reprojected_temp_dir) # Remove the temporary directory
+        if not all_reprojected: # If no rasters were successfully reprojected, skip to the next subfolder
+            logger.error(f"No rasters successfully reprojected for {subfolder_name}!") # Log the error message
+            shutil.rmtree(reprojected_temp_dir, ignore_errors=True) # Clean up the temporary directory
             continue # Skip to the next subfolder
 
-        vrt_path = os.path.join(reprojected_temp_dir, f'aligned_mosaic_{subfolder_name}.vrt') # Create the VRT path
-        logger.info(f"Building VRT for {subfolder_name} from reprojected files...") # Log the message
-
-        vrt = gdal.BuildVRT( # Build the VRT file for the reprojected rasters
-            vrt_path, # Set the VRT path
-            all_reprojected, # Set the list of reprojected rasters
-            options=gdal.BuildVRTOptions( # Set the VRT options
-                resampleAlg='nearest', # Set the resampling algorithm
-                addAlpha=False, # Set to add alpha channel
-                separate=False, # Set to separate bands
-                srcNodata=nodata_value, # Set the source nodata value
-                VRTNodata=nodata_value # Set the VRT nodata value
-            )
-        )
-        if vrt is None: # Check if the VRT was successfully built
-            logger.error(f"Failed to build VRT for {subfolder_name}") # Log the error
-            shutil.rmtree(reprojected_temp_dir) # Remove the temporary directory
+        vrt_path = os.path.join(reprojected_temp_dir, f"aligned_mosaic_{subfolder_name}.vrt") # Path for the VRT file
+        logger.info(f"Building VRT for {subfolder_name}...") # Log the operation
+        vrt = gdal.BuildVRT(vrt_path, all_reprojected, options=gdal.BuildVRTOptions( # Build the VRT from the reprojected rasters
+            resampleAlg='nearest', srcNodata=nodata_value, VRTNodata=nodata_value)) # Set VRT options
+        if vrt is None: # If the VRT could not be built, skip to the next subfolder
+            logger.error(f"Failed to build VRT for {subfolder_name}") # Log the error message
+            shutil.rmtree(reprojected_temp_dir, ignore_errors=True) # Clean up the temporary directory
             continue # Skip to the next subfolder
-        vrt = None # Close the VRT
- 
-        logger.info(f"Creating final mosaic for {subfolder_name}...") # Log the message
+        vrt = None # Close the VRT dataset
 
-        gdal.Translate( # Translate the VRT to a TIFF file
-            final_output_path, # Set the output path
-            vrt_path, # Set the VRT path
-            options=gdal.TranslateOptions( # Set the translation options
-                format='GTiff', # Set the output format
-                creationOptions=['TILED=YES', 'COMPRESS=LZW', 'BIGTIFF=YES', 'PREDICTOR=2'], # Set the creation options
-                noData=nodata_value # Set the nodata value
-            )
-        )
-        logger.info(f"Final mosaic for {subfolder_name} saved to: {final_output_path}") # Log the message
+        logger.info(f"Creating final mosaic for {subfolder_name}...") # Log the operation
+        gdal.Translate(final_output_path, vrt_path, # Create the final mosaic from the VRT
+            options=gdal.TranslateOptions(format='GTiff', 
+                                          creationOptions=['TILED=YES', 'COMPRESS=LZW', 'BIGTIFF=YES', 'PREDICTOR=2'],
+                                          noData=nodata_value)) # Set translation options
+        raster_pyramid(final_output_path) # Build the internal raster pyramid for the final mosaic
 
-        raster_pyramid(final_output_path) # Build the internal raster pyramid
+        if os.path.exists(final_output_path): # If the final mosaic was created successfully
+            shutil.rmtree(reprojected_temp_dir, ignore_errors=True) # Clean up the temporary directory
+            logger.info(f"Mosaic for {subfolder_name} complete at {final_output_path}") # Log the success message
 
-        if os.path.exists(final_output_path): # Check if the final output file exists
-            logger.info(f"Cleaning up temporary files for {subfolder_name}...") # Log the message
-            try:
-                shutil.rmtree(reprojected_temp_dir) # Remove the temporary directory
-            except OSError as e: # Catch any exceptions
-                logger.warning(f"Could not remove temporary directory {reprojected_temp_dir}: {e}.") # Log the warning
-
-        logger.info(f"Mosaic creation for {subfolder_name} complete!") # Log the message
-
-    logger.info("All processed!") # Log the message
+    logger.info("✅ All mosaics processed successfully!") # Log the completion message
 
 if __name__ == "__main__":
     main()
