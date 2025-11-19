@@ -41,7 +41,7 @@ def analyze_rasters(files):
         target_epsg = "EPSG:4326"
 
     else:
-        target_epsg = "EPSG:32647" # Use EPSG:32647 as default which is WGS84 UTM Zone 47 North (UTM Zone 47N) Coverage Thailand.
+        target_epsg = "EPSG:32647" & "EPSG:32648" # Use EPSG:32647 and 32648 as default which is WGS84 UTM Zone 47 and 48 North (UTM Zone 47N and 48N) Coverage Thailand.
 
     # Average resolution - check if lists are empty to avoid ZeroDivisionError
     if not x_res_list or not y_res_list: # Check if resolution lists are empty
