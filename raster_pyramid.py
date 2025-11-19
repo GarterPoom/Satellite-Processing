@@ -25,12 +25,6 @@ def build_overviews(filepath, overview_levels=[2, 4, 8, 16, 32], resampling_meth
     """
     logger.info(f"Building overviews for {filepath} using levels {overview_levels} with {resampling_method} resampling...")
 
-<<<<<<< HEAD
-=======
-    gdal.SetConfigOption('COMPRESS_OVERVIEW', 'DEFLATE') # Set compression for overviews to DEFLATE or LZ77 with ArcGIS Support
-    gdal.SetConfigOption('BIGTIFF_OVERVIEW', 'YES') # Allow BigTIFF for overviews
-
->>>>>>> 77d755de132ba5dbbfa15007d9f11ba7bb92db1b
     # Determine the target file path early to ensure it's available for logging in case of an error.
     if output_dir:
         # Create output directory if it doesn't exist
