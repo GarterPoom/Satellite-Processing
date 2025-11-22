@@ -4,6 +4,7 @@ import logging
 import shutil
 from collections import defaultdict
 from osgeo import gdal, osr
+from tqdm import tqdm
 
 # Setup logger
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s") # Set to INFO for more verbosity
@@ -42,7 +43,12 @@ def analyze_rasters(files):
     else:
         # Determine the most common projection from the input files
         most_common_epsg_code = max(proj_counts, key=proj_counts.get)
-        target_epsg = f"EPSG:{most_common_epsg_code}"
+        # If the most common CRS is not 32647 or 32648, default to 4326
+        if str(most_common_epsg_code) in ("32647", "32648"):
+            target_epsg = f"EPSG:{most_common_epsg_code}"
+        else:
+            logger.info(f"Most common CRS (EPSG:{most_common_epsg_code}) is not 32647 or 32648. Defaulting target to EPSG:4326.")
+            target_epsg = "EPSG:4326"
 
     # Average resolution - check if lists are empty to avoid ZeroDivisionError
     if not x_res_list or not y_res_list: # Check if resolution lists are empty
@@ -53,6 +59,14 @@ def analyze_rasters(files):
 
     logger.info(f"Target EPSG: {target_epsg}, Avg Res: {avg_x_res}, {avg_y_res}") # Log the results
     return target_epsg, avg_x_res, avg_y_res # Return the results
+
+def gdal_progress_callback(complete, message, user_data):
+    """GDAL progress callback function that updates a tqdm progress bar."""
+    # user_data is expected to be a tqdm progress bar instance
+    if user_data is not None:
+        # Update the progress bar to the new completion value
+        user_data.update(int(complete * 100) - user_data.n)
+    return 1 # Returning 1 continues the operation
 
 def build_overviews(filepath, overview_levels=[2, 4, 8, 16, 32], resampling_method='nearest'):
     """
@@ -77,8 +91,9 @@ def build_overviews(filepath, overview_levels=[2, 4, 8, 16, 32], resampling_meth
             logger.error(f"Cannot open {filepath} to build overviews.")
             return
 
-        # Build overviews
-        ds.BuildOverviews(resampling_method, overview_levels)
+        # Build overviews with progress bar
+        with tqdm(total=100, desc=f"Building overviews for {os.path.basename(filepath)}", unit='%') as pbar:
+            ds.BuildOverviews(resampling_method, overview_levels, callback=gdal_progress_callback, callback_data=pbar)
         ds = None # Close the dataset
         logger.info(f"Successfully built overviews for {filepath}")
 
@@ -165,8 +180,12 @@ def main():
  
                 base_name = os.path.basename(raster_file) # Get the base name of the file
 
-                if source_epsg_str == target_epsg:
-                    logger.info(f"'{base_name}' (CRS: {source_epsg_str}) matches target CRS. Adding to mosaic.")
+                # If projection matches target, or is one of the accepted projections (32647 (UTM 47N), 32648 (UTM 48N), 4326 (WGS84)), add directly to mosaic list
+                if source_epsg_code in ("32647", "32648", "4326"):
+                    logger.info(f"'{base_name}' is in an accepted CRS ({source_epsg_str}). Adding to mosaic list.")
+                    files_for_mosaic.append(raster_file)
+                elif source_epsg_str == target_epsg:
+                    logger.info(f"'{base_name}' (CRS: {source_epsg_str}) matches target CRS. Adding to mosaic list.")
                     files_for_mosaic.append(raster_file)
                 else:
                     logger.warning(f"'{base_name}' (CRS: {source_epsg_str}) does not match target CRS ({target_epsg}). Skipping this file.")
@@ -211,14 +230,16 @@ def main():
 
         # Translate VRT to final GeoTIFF for the current directory
         logger.info(f"Creating final mosaic for {dir_name}...") # Log final mosaic creation
-        gdal.Translate( # Translate VRT to GeoTIFF
-            final_output_path, # Output path for the final mosaic
-            vrt_path, # Input VRT file
-            options=gdal.TranslateOptions( # Translation options
-                format='GTiff', # Output format
-                creationOptions=['TILED=YES', 'BIGTIFF=YES', 'PREDICTOR=2', 'COMPRESS=DEFLATE'] # Creation options
+        with tqdm(total=100, desc=f"Creating mosaic for {dir_name}", unit='%') as pbar:
+            gdal.Translate( # Translate VRT to GeoTIFF
+                final_output_path, # Output path for the final mosaic
+                vrt_path, # Input VRT file
+                options=gdal.TranslateOptions( # Translation options
+                    format='GTiff', # Output format
+                    creationOptions=['TILED=YES', 'BIGTIFF=YES', 'PREDICTOR=2', 'COMPRESS=DEFLATE'], # Creation options
+                    callback=gdal_progress_callback, callback_data=pbar
+                )
             )
-        )
         logger.info(f"Final mosaic for {dir_name} saved to: {final_output_path}") # Log the output path
 
         # Build overviews for the final mosaic
