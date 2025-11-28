@@ -9,10 +9,10 @@ from pathlib import Path
 root_folder = r"F:\\THEOS-2_Raw"
 
 # Destination folder to copy renamed files to
-destination_folder = r"D:\\Satellite Processing\\THEOS-2"
+destination_folder = r"D:\\Satellite_Processing\\THEOS-2"
 
 # Suffix you want to add
-custom_suffix = "INT_69_055_THA_Ayutthaya_FL"
+custom_suffix = "Suffix you want to add"
 
 # =================================
 
