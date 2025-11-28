@@ -4,6 +4,7 @@ import logging
 import shutil
 from collections import defaultdict
 from osgeo import gdal, osr
+from tqdm import tqdm
 
 # Setup logger
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s") # Set to INFO for more verbosity
@@ -41,7 +42,7 @@ def analyze_rasters(files):
         target_epsg = "EPSG:4326"
 
     else:
-        target_epsg = "EPSG:32647" & "EPSG:32648" # Use EPSG:32647 and 32648 as default which is WGS84 UTM Zone 47 and 48 North (UTM Zone 47N and 48N) Coverage Thailand.
+        target_epsg = "EPSG:32647" # Use EPSG:32647 as default which is WGS84 UTM Zone 47 North (UTM Zone 47N) Coverage Thailand.
 
     # Average resolution - check if lists are empty to avoid ZeroDivisionError
     if not x_res_list or not y_res_list: # Check if resolution lists are empty
@@ -109,7 +110,7 @@ def main():
         logger.warning(f"No subfolders or raster files found in '{root_dir}'. Exiting.") # Log a warning
         return # Exit the script
 
-    for processing_path in processing_dirs: # Loop through each processing directory
+    for processing_path in tqdm(processing_dirs, desc="Processing directories"): # Loop through each processing directory
         dir_name = os.path.basename(processing_path) # Get the directory name
         logger.info(f"\n--- Processing directory: {dir_name} ---") # Log the current directory being processed
 
@@ -139,7 +140,7 @@ def main():
 
         # Reproject all rasters for the current directory
         all_reprojected = [] # List to hold paths of reprojected rasters
-        for i, raster_file in enumerate(raster_files): # Loop through each raster file
+        for i, raster_file in enumerate(tqdm(raster_files, desc=f"Processing files in {dir_name}", leave=False)): # Loop through each raster file
             try:
                 ds = gdal.Open(raster_file)
                 if ds is None:
@@ -152,7 +153,7 @@ def main():
                 ds = None
 
                 # If projection of raster is EPSG:4326, EPSG:32647 or EPSG:32648, just skipping reprojection
-                if source_epsg in ("4326", "32647" "32648"):
+                if source_epsg in ("4326", "32647", "32648"):
                     logger.info(f"{os.path.basename(raster_file)} is in a supported CRS (EPSG:{source_epsg}), skipping reprojection.")
                     all_reprojected.append(raster_file)
                     continue
