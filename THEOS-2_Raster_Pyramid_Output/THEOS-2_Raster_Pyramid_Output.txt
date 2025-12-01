@@ -1,0 +1,12 @@
+# This directory contains scripts and configurations for processing THEOS-2 satellite raster data.
+# The primary goal is to generate raster pyramids, which are multi-resolution representations
+# of the original satellite imagery. This process is crucial for efficient visualization
+# and analysis of large raster datasets, especially in web mapping applications or GIS systems.
+
+# Key functionalities and components within this directory may include:
+# - Data ingestion and pre-processing of raw THEOS-2 imagery.
+# - Generation of various pyramid levels (downsampled versions) of the raster data.
+# - Configuration files for defining pyramid parameters (e.g., resampling methods, tile sizes).
+# - Scripts for organizing and storing the generated pyramids.
+# - Potential integration with geospatial libraries (e.g., GDAL, rasterio) for raster operations.
+# - Output formats for the pyramids might include GeoTIFF, COG (Cloud Optimized GeoTIFF), or other tiled formats.

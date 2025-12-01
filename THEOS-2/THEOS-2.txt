@@ -1,0 +1,16 @@
+# This directory is dedicated to the processing and management of THEOS-2 satellite data.
+# It serves as the central hub for all operations related to THEOS-2 imagery,
+# from initial raw data handling to the generation of derived products.
+
+# Key sub-directories and functionalities within this main directory include:
+# - `Raw_Data`: Storage for original, unprocessed THEOS-2 satellite imagery.
+# - `Pre_Processed_Data`: Contains imagery that has undergone initial corrections
+#   (e.g., radiometric, geometric) and is ready for further analysis.
+# - `Raster_Pyramid_Output`: Houses the multi-resolution raster pyramids generated
+#   from THEOS-2 imagery, optimized for efficient visualization and web mapping.
+# - `Analysis_Ready_Data`: Stores THEOS-2 data that has been fully processed and
+#   is ready for scientific analysis, often in standardized formats.
+# - `Scripts`: Contains various scripts for automating tasks such as data download,
+#   pre-processing, pyramid generation, and quality control.
+# - `Documentation`: Holds relevant documents, metadata, and reports pertaining
+#   to THEOS-2 data processing.
