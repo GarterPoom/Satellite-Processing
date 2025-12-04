@@ -6,13 +6,16 @@ from pathlib import Path
 # ======== USER SETTINGS ========
 
 # Root folder to search in (contains multiple subfolders)
-root_folder = r"your/path/here"
+root_folder = r"F:\\THEOS-2_Raw"
 
 # Destination folder to copy renamed files to
-destination_folder = r"your/path/here"
+destination_folder = r"THEOS-2"
+
+# Make Sure Directories Exist
+os.makedirs(destination_folder, exist_ok=True)
 
 # Suffix you want to add
-custom_suffix = "Suffix that you need to specfic"
+custom_suffix = "AWG_20251203_45fc70"
 
 # =================================
 

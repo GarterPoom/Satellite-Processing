@@ -87,6 +87,9 @@ def main():
     root_dir = r'THEOS-2_Raster_Pyramid_Output' # This is now the parent directory containing subfolders
     output_dir = r'Raster_Mosaic' # Output directory for mosaics
 
+    # Make sure Output Directory Exist
+    os.makedirs(output_dir, exist_ok=True)
+
     # Determine processing directories.
     # First, look for subdirectories.
     subfolders = [f.path for f in os.scandir(root_dir) if f.is_dir()] # List of subdirectories
@@ -101,7 +104,7 @@ def main():
         # Case 2: No subfolders. Check for raster files in the root directory.
         raster_files_in_root = glob.glob(os.path.join(root_dir, '*.tif')) + \
                                glob.glob(os.path.join(root_dir, '*.tiff')) # List of raster files in root
-        if raster_files_in_root:
+        if raster_files_in_root:                                           
             # If rasters are present, the root directory itself is the single item to process.
             processing_dirs = [root_dir] # Process the root directory
             logger.info(f"No subfolders found. Processing raster files directly in '{root_dir}'.") # Log this case
@@ -115,7 +118,7 @@ def main():
         logger.info(f"\n--- Processing directory: {dir_name} ---") # Log the current directory being processed
 
         # Define output path for the current subfolder's mosaic
-        final_output_filename = "FL_20251126_TH2_20251126_1041_ENT.tif" #f"{dir_name}_Mosaic.tif"
+        final_output_filename = "FL_20251202_TH2_20251202_1036_ENT.tif" #f"{dir_name}_Mosaic.tif"
         final_output_path = os.path.join(output_dir, final_output_filename)
 
         # Find all raster files within the current processing directory

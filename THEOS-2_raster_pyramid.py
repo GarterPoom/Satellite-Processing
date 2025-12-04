@@ -99,6 +99,9 @@ def main():
     # Define the output directory for processed rasters
     output_directory = r'THEOS-2_Raster_Pyramid_Output'
 
+    # To create directory
+    os.makedirs(output_directory, exist_ok=True)
+
     # Toggle to include subdirectories under the root directory
     include_subdirectories = True
 
