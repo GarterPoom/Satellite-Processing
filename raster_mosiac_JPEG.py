@@ -10,7 +10,7 @@ import shutil
 # ================= CONFIG =================
 
 # Point to the Month folder (The parent of the day folders)
-root_dir = r"Y:\Burnscar2025_B\96\2025\11"
+root_dir = r"Y:\Burnscar2025_B\96\2025\12"
 
 target_epsg = 32647
 jpeg_scale_factor = 0.05  # downscale to 5%

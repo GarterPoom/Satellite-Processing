@@ -118,7 +118,7 @@ def main():
         logger.info(f"\n--- Processing directory: {dir_name} ---") # Log the current directory being processed
 
         # Define output path for the current subfolder's mosaic
-        final_output_filename = "FL_20251202_TH2_20251202_1036_ENT.tif" #f"{dir_name}_Mosaic.tif"
+        final_output_filename = f"{dir_name}_Mosaic.tif"
         final_output_path = os.path.join(output_dir, final_output_filename)
 
         # Find all raster files within the current processing directory

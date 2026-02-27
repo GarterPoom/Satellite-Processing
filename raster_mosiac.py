@@ -83,7 +83,7 @@ def build_overviews(filepath, overview_levels=[2, 4, 8, 16, 32], resampling_meth
 
 def main():
     # Configure input and output directories/paths
-    root_dir = r'THEOS-2' # This is now the parent directory containing subfolders
+    root_dir = r'Raw_Raster' # This is now the parent directory containing subfolders
     output_dir = r'Raster_Mosaic' # Output directory for mosaics
 
     # Determine processing directories.
@@ -114,7 +114,8 @@ def main():
         logger.info(f"\n--- Processing directory: {dir_name} ---") # Log the current directory being processed
 
         # Define output path for the current subfolder's mosaic
-        final_output_filename = f"{dir_name}_Mosaic.tif"
+        #final_output_filename = f"{dir_name}_Mosaic.tif" 
+        final_output_filename = "Carbon_Stock_2025_TH.tif"
         final_output_path = os.path.join(output_dir, final_output_filename)
 
         # Find all raster files within the current processing directory
