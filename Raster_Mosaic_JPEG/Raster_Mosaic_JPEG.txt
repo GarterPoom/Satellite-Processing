@@ -1,0 +1,17 @@
+# This directory is designated for storing JPEG mosaics generated from satellite raster data.
+# The primary purpose of these mosaics is to provide a readily viewable and shareable
+# representation of larger geographical areas, often created by stitching together
+# multiple individual satellite images. JPEG format is chosen for its widespread
+# compatibility and efficient compression, suitable for quick previews and web display.
+
+# Key aspects and contents within this directory may include:
+# - Final mosaic products in JPEG format, potentially with accompanying world files (.jgw)
+#   for georeferencing.
+# - Scripts or configurations used for the mosaicking process, including parameters
+#   for blending, color balancing, and compression.
+# - Intermediate files generated during the mosaicking process (though ideally,
+#   these would be cleaned up).
+# - Documentation regarding the source imagery, mosaicking methodology, and
+#   spatial extent of the mosaics.
+# - These JPEGs are typically derived from processed raster data, such as
+#   those found in `Pre_Processed_Data` or `Analysis_Ready_Data` directories.

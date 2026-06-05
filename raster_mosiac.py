@@ -36,18 +36,12 @@ def analyze_rasters(files):
         ds = None # Close the dataset
 
     # Most common projection
-<<<<<<< HEAD
     if not proj_counts:
         logger.warning("No projections found. Defaulting to EPSG:4326")
         target_epsg = "EPSG:4326"
 
-=======
-    if not proj_counts: # Check if any projections were found
-        logger.warning("No projections found. Defaulting to EPSG:4326") # Log a warning
-        target_epsg = "EPSG:4326" # Default to WGS84
->>>>>>> 8268bd595ea5224b84b06f6f373d47419b084a13
     else:
-        target_epsg = "EPSG:32647" # Use EPSG:32647 as default which is WGS84 UTM Zone 47 North (UTM Zone 47N) Coverage Thailand.
+        target_epsg = "EPSG:32647" & "EPSG:32648" # Use EPSG:32647 and 32648 as default which is WGS84 UTM Zone 47 and 48 North (UTM Zone 47N and 48N) Coverage Thailand.
 
     # Average resolution - check if lists are empty to avoid ZeroDivisionError
     if not x_res_list or not y_res_list: # Check if resolution lists are empty
@@ -89,13 +83,8 @@ def build_overviews(filepath, overview_levels=[2, 4, 8, 16, 32], resampling_meth
 
 def main():
     # Configure input and output directories/paths
-<<<<<<< HEAD
-    root_dir = r'THEOS-2' # This is now the parent directory containing subfolders
-=======
-    root_dir = r"/your/path/here" # This can contain subfolders or raster files directly
+    root_dir = r'Raw_Raster' # This is now the parent directory containing subfolders
     output_dir = r'Raster_Mosaic' # Output directory for mosaics
-    os.makedirs(output_dir, exist_ok=True) # Create output directory if it doesn't exist
->>>>>>> 8268bd595ea5224b84b06f6f373d47419b084a13
 
     # Determine processing directories.
     # First, look for subdirectories.
@@ -124,15 +113,10 @@ def main():
         dir_name = os.path.basename(processing_path) # Get the directory name
         logger.info(f"\n--- Processing directory: {dir_name} ---") # Log the current directory being processed
 
-<<<<<<< HEAD
         # Define output path for the current subfolder's mosaic
-        final_output_filename = f"{job_name}_Mosaic.tif"
+        #final_output_filename = f"{dir_name}_Mosaic.tif" 
+        final_output_filename = "Carbon_Stock_2025_TH.tif"
         final_output_path = os.path.join(output_dir, final_output_filename)
-=======
-        # Define output path for the current directory's mosaic
-        final_output_filename = f"{dir_name}_Mosaic.tif" # Output filename
-        final_output_path = os.path.join(output_dir, final_output_filename) # Full output path
->>>>>>> 8268bd595ea5224b84b06f6f373d47419b084a13
 
         # Find all raster files within the current processing directory
         raster_files = glob.glob(os.path.join(processing_path, '*.tif')) + \
@@ -158,7 +142,6 @@ def main():
         all_reprojected = [] # List to hold paths of reprojected rasters
         for i, raster_file in enumerate(raster_files): # Loop through each raster file
             try:
-<<<<<<< HEAD
                 ds = gdal.Open(raster_file)
                 if ds is None:
                     logger.warning(f"Cannot open {raster_file}. Skipping.")
@@ -185,33 +168,6 @@ def main():
                     yRes=y_res,
                     targetAlignedPixels=True, # Ensure pixels are aligned to the resolution grid for reprojection
                     resampleAlg='near',
-=======
-                ds = gdal.Open(raster_file) # Open the raster file
-                if ds is None: # Check if the file was opened successfully
-                    logger.warning(f"Cannot open {raster_file}. Skipping.") # Log a warning
-                    continue # Skip to the next file
- 
-                srs = osr.SpatialReference() # Create spatial reference object
-                srs.ImportFromWkt(ds.GetProjection()) # Import projection from the dataset
-                source_epsg = srs.GetAuthorityCode(None) # Get EPSG code
-                ds = None # Close the dataset
- 
-                if source_epsg == target_epsg.replace("EPSG:", ""): # Check if reprojection is needed
-                    logger.info(f"{os.path.basename(raster_file)} already in {target_epsg}, skipping reprojection.") # Log that reprojection is skipped
-                    all_reprojected.append(raster_file) # Add original file to the list
-                    continue # Skip to the next file
-  
-                base_name = os.path.basename(raster_file) # Get the base name of the file
-                reprojected_path = os.path.join(reprojected_temp_dir, f"reproj_{i}_{base_name}") # Path for the reprojected file
- 
-                logger.info(f"Reprojecting {base_name} to {target_epsg} with resolution {x_res}, {y_res} and aligned pixels") # Log reprojection details
-                warp_options = gdal.WarpOptions( # Set warp options
-                    dstSRS=target_epsg, # Target spatial reference
-                    xRes=x_res, # Target x resolution
-                    yRes=y_res, # Target y resolution
-                    targetAlignedPixels=True, # Align pixels to the target resolution
-                    resampleAlg='near', # Changed from 'nearest' to 'near' for gdal.WarpOptions
->>>>>>> 8268bd595ea5224b84b06f6f373d47419b084a13
                     srcNodata=0, # Assuming 0 is nodata in source
                     dstNodata=0, # Set nodata in output
                     outputType=gdal.GDT_UInt16, # Use UInt16 for output data type
