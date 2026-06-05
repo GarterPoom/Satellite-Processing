@@ -68,7 +68,7 @@ OUT_FACTOR = 4   # 10 m input / 4 = 2.5 m output, the model's native 2.5 m downs
 # real context on every side. The halo is super-resolved but discarded so that
 # seams between tiles disappear. predict_large needs a SQUARE input, so every
 # tile fed to it is (CORE + 2*HALO) on a side.
-CORE = 512   # input pixels written out per tile
+CORE = 2048   # input pixels written out per tile
 HALO = 64    # input pixels of context discarded on each side (suppresses seams)
 
 OVERVIEW_LEVELS = [2, 4, 8, 16, 32]   # nearest-neighbour pyramid levels
