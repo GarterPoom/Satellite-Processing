@@ -33,6 +33,7 @@ import glob                                 # enumerate the input rasters in INP
 INPUT_DIR   = r"Sentinel-2"         # directory of input rasters; every *.tif inside is super-resolved
 OUTPUT_DIR  = r"Sentinel-2_SR"      # directory the SR reflectance + spectral-index outputs are written to
 MODEL_DIR   = "model/SEN2SRLite"                                # downloaded mlstac model
+INCLUDE_SUBDIRS = True              # Toggle to search subdirectories within INPUT_DIR
 
 # Each input's output filenames are derived from its basename plus a resolution
 # tag (e.g. T47PQS_20260331T033541.tif -> T47PQS_20260331T033541_SR2.5m.tif and
@@ -203,18 +204,21 @@ def _res_tag(out_res):
     return f"SR{out_res:g}m"          # %g trims trailing zeros so 5.0 m reads as 'SR5m', not 'SR5.0m'
 
 
-def output_paths(input_path, out_res):
+def output_paths(input_path, out_res, input_root=INPUT_DIR):
     """Derive the SR and spectral-index output paths from an input filename.
-
-    Keeps the input's basename, appends a resolution tag, and writes both
-    products into OUTPUT_DIR. e.g. <INPUT_DIR>/T47PQS_20260331T033541.tif with
-    out_res=2.5 -> <OUTPUT_DIR>/T47PQS_20260331T033541_SR2.5m.tif (reflectance)
-    and ..._SR2.5m_indices.tif (indices).
+    Preserves subdirectory structure relative to input_root within OUTPUT_DIR.
     """
-    stem = os.path.splitext(os.path.basename(input_path))[0]   # input filename without directory or .tif extension
-    tag = _res_tag(out_res)                                     # e.g. 'SR2.5m'
-    sr_path    = os.path.join(OUTPUT_DIR, f"{stem}_{tag}.tif")          # super-resolved reflectance product
-    index_path = os.path.join(OUTPUT_DIR, f"{stem}_{tag}_indices.tif")  # derived spectral indices (pass 2)
+    rel_path = os.path.relpath(input_path, input_root)
+    rel_dir = os.path.dirname(rel_path)
+    stem = os.path.splitext(os.path.basename(input_path))[0]
+    tag = _res_tag(out_res)
+    
+    # Create output subfolder matching input structure
+    target_output_dir = os.path.join(OUTPUT_DIR, rel_dir)
+    os.makedirs(target_output_dir, exist_ok=True)
+
+    sr_path    = os.path.join(target_output_dir, f"{stem}_{tag}.tif")
+    index_path = os.path.join(target_output_dir, f"{stem}_{tag}_indices.tif")
     return sr_path, index_path
 
 
@@ -338,7 +342,14 @@ def process_file(input_path):
 def main():
     """Super-resolve every *.tif in INPUT_DIR, naming each output from its input filename."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)                  # ensure the output directory exists
-    inputs = sorted(glob.glob(os.path.join(INPUT_DIR, "*.tif")))  # every input raster, in a stable order
+    
+    # Define the search pattern based on recursion toggle
+    if INCLUDE_SUBDIRS:
+        pattern = os.path.join(INPUT_DIR, '**', '*.tif')
+    else:
+        pattern = os.path.join(INPUT_DIR, '*.tif')
+
+    inputs = sorted(glob.glob(pattern, recursive=INCLUDE_SUBDIRS)) # find input rasters
     if not inputs:                                          # nothing to do — fail loudly rather than silently
         raise SystemExit(f"No .tif inputs found in {INPUT_DIR!r}")
     print(f"Found {len(inputs)} input raster(s) in {INPUT_DIR!r}")
