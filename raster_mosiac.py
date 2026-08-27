@@ -9,6 +9,43 @@ from osgeo import gdal, osr
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s") # Set to INFO for more verbosity
 logger = logging.getLogger(__name__) # Logger for this script
 
+def get_common_raster_data_type(files):
+    """Return the common band data type used by all input rasters.
+
+    A GeoTIFF band can only have one data type, so inputs with mixed types
+    cannot be mosaicked without choosing a conversion type explicitly.
+    """
+    input_data_types = set()
+
+    for filepath in files:
+        ds = gdal.Open(filepath, gdal.GA_ReadOnly)
+        if ds is None:
+            logger.warning(f"Cannot open {filepath} to determine its data type.")
+            continue
+
+        for band_index in range(1, ds.RasterCount + 1):
+            input_data_types.add(ds.GetRasterBand(band_index).DataType)
+        ds = None
+
+    if not input_data_types:
+        logger.error("Could not determine a data type from the input rasters.")
+        return None
+
+    if len(input_data_types) > 1:
+        type_names = ", ".join(
+            sorted(gdal.GetDataTypeName(data_type) for data_type in input_data_types)
+        )
+        logger.error(
+            "Input rasters have mixed band data types (%s). "
+            "Use rasters with one common type or choose an explicit conversion type.",
+            type_names,
+        )
+        return None
+
+    data_type = input_data_types.pop()
+    logger.info("Using input raster data type for output: %s", gdal.GetDataTypeName(data_type))
+    return data_type
+
 def analyze_rasters(files):
     """Analyze rasters to determine projection and average resolution"""
     logger.info("Analyzing rasters to determine optimal mosaic parameters...")
@@ -41,7 +78,7 @@ def analyze_rasters(files):
         target_epsg = "EPSG:4326"
 
     else:
-        target_epsg = "EPSG:32647" & "EPSG:32648" # Use EPSG:32647 and 32648 as default which is WGS84 UTM Zone 47 and 48 North (UTM Zone 47N and 48N) Coverage Thailand.
+        target_epsg = "EPSG:32647" # Use EPSG:32647 as default which is WGS84 UTM Zone 47 and 48 North (UTM Zone 47N and 48N) Coverage Thailand.
 
     # Average resolution - check if lists are empty to avoid ZeroDivisionError
     if not x_res_list or not y_res_list: # Check if resolution lists are empty
@@ -83,7 +120,7 @@ def build_overviews(filepath, overview_levels=[2, 4, 8, 16, 32], resampling_meth
 
 def main():
     # Configure input and output directories/paths
-    root_dir = r'Raw_Raster' # This is now the parent directory containing subfolders
+    root_dir = r'Raster_Pyramid_Output' # This is now the parent directory containing subfolders
     output_dir = r'Raster_Mosaic' # Output directory for mosaics
 
     # Determine processing directories.
@@ -114,8 +151,8 @@ def main():
         logger.info(f"\n--- Processing directory: {dir_name} ---") # Log the current directory being processed
 
         # Define output path for the current subfolder's mosaic
-        #final_output_filename = f"{dir_name}_Mosaic.tif" 
-        final_output_filename = "Carbon_Stock_2025_TH.tif"
+        final_output_filename = f"{dir_name}_Mosaic.tif" 
+        #final_output_filename = "Sentinel-2_Forest_Thailand_Mosaic.tif"
         final_output_path = os.path.join(output_dir, final_output_filename)
 
         # Find all raster files within the current processing directory
@@ -133,6 +170,15 @@ def main():
         if x_res is None or y_res is None: # Check if resolution analysis failed
             logger.error(f"Failed to determine average resolution for {dir_name}. Skipping this directory.") # Log an error
             continue # Skip to the next directory
+
+        output_data_type = get_common_raster_data_type(raster_files)
+        if output_data_type is None:
+            logger.error(f"Failed to determine a common data type for {dir_name}. Skipping this directory.")
+            continue
+
+        # TIFF predictor 3 is intended for floating-point data; predictor 2 is
+        # appropriate for integer data.
+        predictor = '3' if output_data_type in (gdal.GDT_Float32, gdal.GDT_Float64) else '2'
 
         # Create a single temporary directory for this processing task 
         reprojected_temp_dir = os.path.join(output_dir, f"temp_{dir_name}_reprojected") # Temp directory for reprojected files
@@ -170,7 +216,7 @@ def main():
                     resampleAlg='near',
                     srcNodata=0, # Assuming 0 is nodata in source
                     dstNodata=0, # Set nodata in output
-                    outputType=gdal.GDT_UInt16, # Use UInt16 for output data type
+                    outputType=output_data_type, # Preserve the input raster data type
                     creationOptions=['TILED=YES', 'COMPRESS=LZW', 'BIGTIFF=YES'], # Creation options
                     errorThreshold=0.0 # Set error threshold to 0.0 for strict reprojection
                 )
@@ -226,7 +272,7 @@ def main():
             vrt_path, # Input VRT file
             options=gdal.TranslateOptions( # Translation options
                 format='GTiff', # Output format
-                creationOptions=['TILED=YES', 'COMPRESS=LZW', 'BIGTIFF=YES', 'PREDICTOR=2'] # Creation options
+                creationOptions=['TILED=YES', 'COMPRESS=LZW', 'BIGTIFF=YES', f'PREDICTOR={predictor}'] # Creation options
             )
         )
         logger.info(f"Final mosaic for {dir_name} saved to: {final_output_path}") # Log the output path
