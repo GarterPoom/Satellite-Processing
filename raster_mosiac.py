@@ -150,6 +150,13 @@ def main():
                 srs = osr.SpatialReference()
                 srs.ImportFromWkt(ds.GetProjection())
                 source_epsg = srs.GetAuthorityCode(None)
+                source_band = ds.GetRasterBand(1)
+                if source_band is None:
+                    logger.warning(f"Cannot read the first band of {raster_file}. Skipping.")
+                    ds = None
+                    continue
+                source_data_type = source_band.DataType
+                source_data_type_name = gdal.GetDataTypeName(source_data_type)
                 ds = None
 
                 # If projection of raster is EPSG:4326, EPSG:32647 or EPSG:32648, just skipping reprojection
@@ -161,7 +168,10 @@ def main():
                 base_name = os.path.basename(raster_file)
                 reprojected_path = os.path.join(reprojected_temp_dir, f"reproj_{i}_{base_name}")
 
-                logger.info(f"Reprojecting {base_name} to {target_epsg} with resolution {x_res}, {y_res} and aligned pixels")
+                logger.info(
+                    f"Reprojecting {base_name} to {target_epsg} with resolution {x_res}, {y_res}, "
+                    f"aligned pixels, and {source_data_type_name} output"
+                )
                 warp_options = gdal.WarpOptions(
                     dstSRS=target_epsg,
                     xRes=x_res,
@@ -170,7 +180,7 @@ def main():
                     resampleAlg='near',
                     srcNodata=0, # Assuming 0 is nodata in source
                     dstNodata=0, # Set nodata in output
-                    outputType=gdal.GDT_UInt16, # Use UInt16 for output data type
+                    outputType=source_data_type, # Preserve the source raster data type
                     creationOptions=['TILED=YES', 'COMPRESS=LZW', 'BIGTIFF=YES'], # Creation options
                     errorThreshold=0.0 # Set error threshold to 0.0 for strict reprojection
                 )
