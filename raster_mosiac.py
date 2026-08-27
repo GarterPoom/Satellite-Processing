@@ -1,5 +1,4 @@
 import os
-import glob
 import logging
 import shutil
 from collections import defaultdict
@@ -41,7 +40,9 @@ def analyze_rasters(files):
         target_epsg = "EPSG:4326"
 
     else:
-        target_epsg = "EPSG:32647" & "EPSG:32648" # Use EPSG:32647 and 32648 as default which is WGS84 UTM Zone 47 and 48 North (UTM Zone 47N and 48N) Coverage Thailand.
+        # GDAL requires one target CRS.  Use the CRS shared by the largest
+        # number of inputs, then reproject the remaining rasters to it.
+        target_epsg = f"EPSG:{max(proj_counts, key=proj_counts.get)}"
 
     # Average resolution - check if lists are empty to avoid ZeroDivisionError
     if not x_res_list or not y_res_list: # Check if resolution lists are empty
@@ -81,46 +82,56 @@ def build_overviews(filepath, overview_levels=[2, 4, 8, 16, 32], resampling_meth
     except Exception as e: # Catch any exceptions
         logger.error(f"Failed to build overviews for {filepath}: {e}") # Log the error
 
+def find_raster_files(directory):
+    """Return GeoTIFF files directly inside *directory*, case-insensitively."""
+    return [
+        entry.path
+        for entry in os.scandir(directory)
+        if entry.is_file() and entry.name.lower().endswith(('.tif', '.tiff'))
+    ]
+
 def main():
     # Configure input and output directories/paths
-    root_dir = r'Raw_Raster' # This is now the parent directory containing subfolders
+    root_dir = r'Raster_Pyramid_Output' # This is now the parent directory containing subfolders
     output_dir = r'Raster_Mosaic' # Output directory for mosaics
 
-    # Determine processing directories.
-    # First, look for subdirectories.
-    subfolders = [f.path for f in os.scandir(root_dir) if f.is_dir()] # List of subdirectories
+    if not os.path.isdir(root_dir):
+        logger.error(f"Input directory '{root_dir}' does not exist. Exiting.")
+        return
 
-    processing_dirs = [] # List to hold directories to process
-    if subfolders: # Check if subfolders were found
-        # Case 1: Subfolders exist, so we'll process each one.
-        processing_dirs = subfolders # Use subfolders as processing directories
-        logger.info(f"Found {len(subfolders)} subfolders to process in '{root_dir}'.") # Log the number of subfolders
-        
-    else:
-        # Case 2: No subfolders. Check for raster files in the root directory.
-        raster_files_in_root = glob.glob(os.path.join(root_dir, '*.tif')) + \
-                               glob.glob(os.path.join(root_dir, '*.tiff')) # List of raster files in root
-        if raster_files_in_root:
-            # If rasters are present, the root directory itself is the single item to process.
-            processing_dirs = [root_dir] # Process the root directory
-            logger.info(f"No subfolders found. Processing raster files directly in '{root_dir}'.") # Log this case
+    # Find raster-containing directories at the root or anywhere below it.
+    # This supports both a flat input folder and an input folder organized into
+    # one or more subfolders.  The set prevents a directory being processed twice.
+    processing_dirs = []
+    for current_dir, _, _ in os.walk(root_dir):
+        if find_raster_files(current_dir):
+            processing_dirs.append(current_dir)
+
+    processing_dirs.sort()
+    if processing_dirs:
+        logger.info(f"Found raster files in {len(processing_dirs)} directory/directories under '{root_dir}'.")
 
     if not processing_dirs: # If no directories to process were found
         logger.warning(f"No subfolders or raster files found in '{root_dir}'. Exiting.") # Log a warning
         return # Exit the script
 
+    multiple_mosaics = len(processing_dirs) > 1
+    os.makedirs(output_dir, exist_ok=True)
+
     for processing_path in processing_dirs: # Loop through each processing directory
-        dir_name = os.path.basename(processing_path) # Get the directory name
+        relative_dir = os.path.relpath(processing_path, root_dir)
+        dir_name = 'root' if relative_dir == '.' else relative_dir.replace(os.sep, '_')
         logger.info(f"\n--- Processing directory: {dir_name} ---") # Log the current directory being processed
 
         # Define output path for the current subfolder's mosaic
-        #final_output_filename = f"{dir_name}_Mosaic.tif" 
-        final_output_filename = "Carbon_Stock_2025_TH.tif"
+        final_output_filename = (
+            f"Carbon_Stock_2025_TH_{dir_name}.tif"
+            if multiple_mosaics else "Carbon_Stock_2025_TH.tif"
+        )
         final_output_path = os.path.join(output_dir, final_output_filename)
 
         # Find all raster files within the current processing directory
-        raster_files = glob.glob(os.path.join(processing_path, '*.tif')) + \
-                       glob.glob(os.path.join(processing_path, '*.tiff')) # List of raster files
+        raster_files = find_raster_files(processing_path)
 
         if not raster_files:
             logger.warning(f"No raster files found in {processing_path}. Skipping.") # Log a warning
@@ -159,9 +170,10 @@ def main():
                 source_data_type_name = gdal.GetDataTypeName(source_data_type)
                 ds = None
 
-                # If projection of raster is EPSG:4326, EPSG:32647 or EPSG:32648, just skipping reprojection
-                if source_epsg in ("4326", "32647" "32648"):
-                    logger.info(f"{os.path.basename(raster_file)} is in a supported CRS (EPSG:{source_epsg}), skipping reprojection.")
+                # Reprojection is unnecessary only when this raster already
+                # uses the target CRS selected for the current mosaic.
+                if f"EPSG:{source_epsg}" == target_epsg:
+                    logger.info(f"{os.path.basename(raster_file)} is already in {target_epsg}; skipping reprojection.")
                     all_reprojected.append(raster_file)
                     continue
 
