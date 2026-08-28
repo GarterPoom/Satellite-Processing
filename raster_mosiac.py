@@ -1,5 +1,4 @@
 import os
-import glob
 import logging
 import shutil
 from collections import defaultdict
@@ -41,7 +40,9 @@ def analyze_rasters(files):
         target_epsg = "EPSG:4326"
 
     else:
-        target_epsg = "EPSG:32647" & "EPSG:32648" # Use EPSG:32647 and 32648 as default which is WGS84 UTM Zone 47 and 48 North (UTM Zone 47N and 48N) Coverage Thailand.
+        # GDAL requires one target CRS.  Use the CRS shared by the largest
+        # number of inputs, then reproject the remaining rasters to it.
+        target_epsg = f"EPSG:{max(proj_counts, key=proj_counts.get)}"
 
     # Average resolution - check if lists are empty to avoid ZeroDivisionError
     if not x_res_list or not y_res_list: # Check if resolution lists are empty
@@ -52,6 +53,61 @@ def analyze_rasters(files):
 
     logger.info(f"Target EPSG: {target_epsg}, Avg Res: {avg_x_res}, {avg_y_res}") # Log the results
     return target_epsg, avg_x_res, avg_y_res # Return the results
+
+
+def get_nodata_values(dataset, raster_path):
+    """Return declared NoData values for every band and log what was found.
+
+    ``None`` means that the corresponding band has no NoData value in its
+    metadata.  GDAL can then use the source band's own mask/metadata instead
+    of treating a valid value (such as zero) as NoData.
+    """
+    nodata_values = []
+    for band_index in range(1, dataset.RasterCount + 1):
+        band = dataset.GetRasterBand(band_index)
+        nodata_values.append(band.GetNoDataValue() if band is not None else None)
+
+    formatted_values = ', '.join(
+        f'band {band_index}: {value!r}'
+        for band_index, value in enumerate(nodata_values, start=1)
+    )
+    logger.info(
+        f"Declared NoData for {os.path.basename(raster_path)}: "
+        f"{formatted_values or 'no raster bands'}"
+    )
+    return nodata_values
+
+
+def nodata_option_value(nodata_values):
+    """Return the GDAL option value for one or more fully defined bands."""
+    return nodata_values[0] if len(nodata_values) == 1 else nodata_values
+
+
+def common_nodata_values(raster_files):
+    """Return a per-band NoData value only when every input declares the same one.
+
+    A VRT/GeoTIFF band can advertise only one NoData value.  When inputs use
+    different values, leaving VRTNodata unset preserves the NoData metadata of
+    each source instead of incorrectly applying one source's value to another.
+    """
+    common_values = None
+    for raster_file in raster_files:
+        dataset = gdal.Open(raster_file)
+        if dataset is None:
+            logger.warning(f"Cannot open {raster_file} to inspect NoData.")
+            return None
+
+        values = get_nodata_values(dataset, raster_file)
+        dataset = None
+        if not values or any(value is None for value in values):
+            return None
+
+        if common_values is None:
+            common_values = values
+        elif values != common_values:
+            return None
+
+    return common_values
 
 def build_overviews(filepath, overview_levels=[2, 4, 8, 16, 32], resampling_method='nearest'):
     """
@@ -81,52 +137,87 @@ def build_overviews(filepath, overview_levels=[2, 4, 8, 16, 32], resampling_meth
     except Exception as e: # Catch any exceptions
         logger.error(f"Failed to build overviews for {filepath}: {e}") # Log the error
 
+def find_raster_files(directory):
+    """Return GeoTIFF files directly inside *directory*, case-insensitively."""
+    files = [
+        entry.path
+        for entry in os.scandir(directory)
+        if entry.is_file() and entry.name.lower().endswith(('.tif', '.tiff'))
+    ]
+    return sorted(files, key=lambda path: path.casefold())
+
+
+def build_mosaic_filename(raster_files, directory_name, multiple_mosaics):
+    """Build a readable, collision-resistant mosaic name from its inputs.
+
+    A single raster keeps its complete stem.  For several rasters, use their
+    shared underscore-delimited prefix and replace the varying tile section
+    with ``Mosaic``.  If the files have no shared prefix, use the input
+    directory name instead.
+    """
+    stems = [os.path.splitext(os.path.basename(path))[0] for path in raster_files]
+
+    if len(stems) == 1:
+        name_parts = [stems[0]]
+    else:
+        shared_prefix = os.path.commonprefix(stems)
+        # Do not leave a partial field such as ``D_0`` in the output name.
+        shared_prefix = shared_prefix.rsplit('_', 1)[0].rstrip('_-.')
+        name_parts = [shared_prefix or directory_name]
+
+    # Separate input directories may contain identically named raster sets.
+    if multiple_mosaics and directory_name != 'root':
+        name_parts.append(directory_name)
+
+    return f"{'_'.join(name_parts)}_Mosaic.tif"
+
 def main():
     # Configure input and output directories/paths
-    root_dir = r'Raw_Raster' # This is now the parent directory containing subfolders
+    root_dir = r'Raster_Pyramid_Output' # This is now the parent directory containing subfolders
     output_dir = r'Raster_Mosaic' # Output directory for mosaics
 
-    # Determine processing directories.
-    # First, look for subdirectories.
-    subfolders = [f.path for f in os.scandir(root_dir) if f.is_dir()] # List of subdirectories
+    if not os.path.isdir(root_dir):
+        logger.error(f"Input directory '{root_dir}' does not exist. Exiting.")
+        return
 
-    processing_dirs = [] # List to hold directories to process
-    if subfolders: # Check if subfolders were found
-        # Case 1: Subfolders exist, so we'll process each one.
-        processing_dirs = subfolders # Use subfolders as processing directories
-        logger.info(f"Found {len(subfolders)} subfolders to process in '{root_dir}'.") # Log the number of subfolders
-        
-    else:
-        # Case 2: No subfolders. Check for raster files in the root directory.
-        raster_files_in_root = glob.glob(os.path.join(root_dir, '*.tif')) + \
-                               glob.glob(os.path.join(root_dir, '*.tiff')) # List of raster files in root
-        if raster_files_in_root:
-            # If rasters are present, the root directory itself is the single item to process.
-            processing_dirs = [root_dir] # Process the root directory
-            logger.info(f"No subfolders found. Processing raster files directly in '{root_dir}'.") # Log this case
+    # Find raster-containing directories at the root or anywhere below it.
+    # This supports both a flat input folder and an input folder organized into
+    # one or more subfolders.  The set prevents a directory being processed twice.
+    processing_dirs = []
+    for current_dir, _, _ in os.walk(root_dir):
+        if find_raster_files(current_dir):
+            processing_dirs.append(current_dir)
+
+    processing_dirs.sort()
+    if processing_dirs:
+        logger.info(f"Found raster files in {len(processing_dirs)} directory/directories under '{root_dir}'.")
 
     if not processing_dirs: # If no directories to process were found
         logger.warning(f"No subfolders or raster files found in '{root_dir}'. Exiting.") # Log a warning
         return # Exit the script
 
+    multiple_mosaics = len(processing_dirs) > 1
+    os.makedirs(output_dir, exist_ok=True)
+
     for processing_path in processing_dirs: # Loop through each processing directory
-        dir_name = os.path.basename(processing_path) # Get the directory name
+        relative_dir = os.path.relpath(processing_path, root_dir)
+        dir_name = 'root' if relative_dir == '.' else relative_dir.replace(os.sep, '_')
         logger.info(f"\n--- Processing directory: {dir_name} ---") # Log the current directory being processed
 
-        # Define output path for the current subfolder's mosaic
-        #final_output_filename = f"{dir_name}_Mosaic.tif" 
-        final_output_filename = "Carbon_Stock_2025_TH.tif"
-        final_output_path = os.path.join(output_dir, final_output_filename)
-
         # Find all raster files within the current processing directory
-        raster_files = glob.glob(os.path.join(processing_path, '*.tif')) + \
-                       glob.glob(os.path.join(processing_path, '*.tiff')) # List of raster files
+        raster_files = find_raster_files(processing_path)
 
         if not raster_files:
             logger.warning(f"No raster files found in {processing_path}. Skipping.") # Log a warning
             continue # Skip to the next directory
 
+        final_output_filename = build_mosaic_filename(
+            raster_files, dir_name, multiple_mosaics
+        )
+        final_output_path = os.path.join(output_dir, final_output_filename)
+
         logger.info(f"Found {len(raster_files)} raster files in {dir_name} to process") # Log the number of raster files found
+        logger.info(f"Mosaic output filename: {final_output_filename}")
 
         # Analyze rasters for the current directory
         target_epsg, x_res, y_res = analyze_rasters(raster_files) # Analyze rasters to get target EPSG and resolutions
@@ -150,30 +241,56 @@ def main():
                 srs = osr.SpatialReference()
                 srs.ImportFromWkt(ds.GetProjection())
                 source_epsg = srs.GetAuthorityCode(None)
+                source_band = ds.GetRasterBand(1)
+                if source_band is None:
+                    logger.warning(f"Cannot read the first band of {raster_file}. Skipping.")
+                    ds = None
+                    continue
+                source_data_type = source_band.DataType
+                source_data_type_name = gdal.GetDataTypeName(source_data_type)
+                source_nodata_values = get_nodata_values(ds, raster_file)
                 ds = None
 
-                # If projection of raster is EPSG:4326, EPSG:32647 or EPSG:32648, just skipping reprojection
-                if source_epsg in ("4326", "32647" "32648"):
-                    logger.info(f"{os.path.basename(raster_file)} is in a supported CRS (EPSG:{source_epsg}), skipping reprojection.")
+                # Reprojection is unnecessary only when this raster already
+                # uses the target CRS selected for the current mosaic.
+                if f"EPSG:{source_epsg}" == target_epsg:
+                    logger.info(f"{os.path.basename(raster_file)} is already in {target_epsg}; skipping reprojection.")
                     all_reprojected.append(raster_file)
                     continue
 
                 base_name = os.path.basename(raster_file)
                 reprojected_path = os.path.join(reprojected_temp_dir, f"reproj_{i}_{base_name}")
 
-                logger.info(f"Reprojecting {base_name} to {target_epsg} with resolution {x_res}, {y_res} and aligned pixels")
-                warp_options = gdal.WarpOptions(
+                logger.info(
+                    f"Reprojecting {base_name} to {target_epsg} with resolution {x_res}, {y_res}, "
+                    f"aligned pixels, and {source_data_type_name} output"
+                )
+                warp_options_kwargs = dict(
                     dstSRS=target_epsg,
                     xRes=x_res,
                     yRes=y_res,
                     targetAlignedPixels=True, # Ensure pixels are aligned to the resolution grid for reprojection
                     resampleAlg='near',
-                    srcNodata=0, # Assuming 0 is nodata in source
-                    dstNodata=0, # Set nodata in output
-                    outputType=gdal.GDT_UInt16, # Use UInt16 for output data type
+                    outputType=source_data_type, # Preserve the source raster data type
                     creationOptions=['TILED=YES', 'COMPRESS=LZW', 'BIGTIFF=YES'], # Creation options
                     errorThreshold=0.0 # Set error threshold to 0.0 for strict reprojection
                 )
+
+                # Never assume zero is NoData.  Explicitly propagate declared
+                # source values when every band defines one.  For bands without
+                # a declared value (or mixed definitions), omit these options
+                # so GDAL uses each band's native NoData metadata/mask.
+                if source_nodata_values and all(value is not None for value in source_nodata_values):
+                    nodata_value = nodata_option_value(source_nodata_values)
+                    warp_options_kwargs['srcNodata'] = nodata_value
+                    warp_options_kwargs['dstNodata'] = nodata_value
+                else:
+                    logger.info(
+                        f"{base_name} has no complete declared NoData definition; "
+                        "using GDAL's native source metadata/mask."
+                    )
+
+                warp_options = gdal.WarpOptions(**warp_options_kwargs)
                 ds = gdal.Warp(reprojected_path, raster_file, options=warp_options) # Perform the reprojection
                 if ds is None: # Check if the warp operation was successful
                     logger.error(f"gdal.Warp failed for {raster_file} and returned None.") # Log an error
@@ -198,16 +315,27 @@ def main():
         # Build VRT for the current directory's processed files
         vrt_path = os.path.join(reprojected_temp_dir, f'aligned_mosaic_{dir_name}.vrt') # Path for the VRT file
         logger.info(f"Building VRT for {dir_name} from processed files...") # Log VRT building
+        vrt_options_kwargs = dict(
+            resampleAlg='nearest', # 'nearest' is correct for BuildVRTOptions
+            addAlpha=False, # Do not add alpha band
+            separate=False, # Do not separate bands
+        )
+        shared_nodata_values = common_nodata_values(all_reprojected)
+        if shared_nodata_values is not None:
+            vrt_options_kwargs['VRTNodata'] = nodata_option_value(shared_nodata_values)
+            logger.info(
+                f"All inputs for {dir_name} share declared NoData values "
+                f"{shared_nodata_values}; applying them to the VRT."
+            )
+        else:
+            logger.info(
+                f"Inputs for {dir_name} have mixed or missing NoData values; "
+                "preserving NoData metadata per source in the VRT."
+            )
         vrt = gdal.BuildVRT( # Build the VRT
             vrt_path, # Path to save the VRT
             all_reprojected, # List of reprojected files
-            options=gdal.BuildVRTOptions( # VRT build options
-                resampleAlg='nearest', # 'nearest' is correct for BuildVRTOptions
-                addAlpha=False, # Do not add alpha band
-                separate=False, # Do not separate bands
-                srcNodata=0, # Assuming 0 is nodata in source
-                VRTNodata=0 # Set nodata in VRT
-            )
+            options=gdal.BuildVRTOptions(**vrt_options_kwargs) # VRT build options
         )
         if vrt is None:# Check if VRT was built successfully
             logger.error(f"Failed to build VRT for {dir_name}") # Log an error
