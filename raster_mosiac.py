@@ -124,7 +124,7 @@ def build_overviews(filepath, overview_levels=[2, 4, 8, 16, 32], resampling_meth
     logger.info(f"Building overviews for {filepath} using levels {overview_levels} with {resampling_method} resampling...")
     try:
         # Perform Raster Pyramid with Internal Pyramid
-        ds = gdal.Open(filepath, gdal.GA_ReadOnly) # Open the file in ovr for open file in ArcGIS
+        ds = gdal.Open(filepath, gdal.GA_Update) # Open the file with Inner Pyramids buidt-in.
         if ds is None: # Check if the file was opened successfully
             logger.error(f"Cannot open {filepath} to build overviews.") # Log an error
             return # Exit the function
